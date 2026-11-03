@@ -1,11 +1,20 @@
 [
-  {
-    "guid": "575fdaea-52dd-4363-a84b-69c5c52daded",
-    "name": "BetterPlay",
-    "description": "Picks the best version and bitrate for each viewer's connection and keeps playback from freezing.",
-    "overview": "Smart version selection, adaptive streaming and freeze prevention for every client.",
-    "owner": "AHouseOfBards",
-    "category": "General",
-    "versions": []
-  }
+    {
+        "guid":  "575fdaea-52dd-4363-a84b-69c5c52daded",
+        "name":  "BetterPlay",
+        "description":  "Picks the best version and bitrate for each viewer\u0027s connection and keeps playback from freezing.",
+        "overview":  "Smart version selection, adaptive streaming and freeze prevention for every client.",
+        "owner":  "AHouseOfBards",
+        "category":  "General",
+        "versions":  [
+                         {
+                             "version":  "0.1.0.0",
+                             "changelog":  "Probe release (watch only): records how each app requests and plays video, never changes playback. Dashboard page with status, hook health, settings, recent playback and events, log downloads.",
+                             "targetAbi":  "12.0.0.0",
+                             "sourceUrl":  "https://github.com/AHouseOfBards/BetterPlay/releases/download/v0.1.0.0/betterplay_0.1.0.0.zip",
+                             "checksum":  "637a6adaa794cf411db2226cdffe552f",
+                             "timestamp":  "2026-11-03T22:37:48Z"
+                         }
+                     ]
+    }
 ]
