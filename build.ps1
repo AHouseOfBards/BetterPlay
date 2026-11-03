@@ -33,7 +33,8 @@ $md5 = (Get-FileHash $zip -Algorithm MD5).Hash.ToLower()
 "zip: $zip  md5: $md5"
 
 $manifestPath = Join-Path $PSScriptRoot 'manifest.json'
-$manifest = @(Get-Content $manifestPath -Raw | ConvertFrom-Json)
+# Windows PowerShell returns a JSON array as one object; ForEach-Object unrolls it into its entries.
+$manifest = @((Get-Content $manifestPath -Raw | ConvertFrom-Json) | ForEach-Object { $_ })
 $plugin = $manifest | Where-Object guid -eq $guid
 $entry = [pscustomobject]@{
     version   = $Version
@@ -51,7 +52,7 @@ if ($Publish) {
     & $gh release create "v$Version" $zip --repo $repo --title "BetterPlay $Version" --notes $Changelog
     if ($LASTEXITCODE) { throw "release failed" }
     & $git add manifest.json
-    & $git commit -m "Release $Version"
-    & $git push
+    & $git diff --cached --quiet
+    if ($LASTEXITCODE) { & $git commit -m "Release $Version"; & $git push } else { 'manifest.json unchanged; nothing to commit' }
     "Published. Servers pick it up from https://raw.githubusercontent.com/$repo/main/manifest.json"
 }

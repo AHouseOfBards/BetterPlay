@@ -13,6 +13,15 @@ design is in [docs/BetterPlay-design.md](docs/BetterPlay-design.md).
 
 Requires Jellyfin 12.0 or newer (12.x).
 
+## Dashboard
+Dashboard → **BetterPlay** (in the server menu, or Plugins → BetterPlay). It shows:
+- **Status:** version, mode, and whether each of BetterPlay's hooks is working on your server.
+- **Settings:** mode, and what to record (play requests, device profiles, playback reports, video delivery timing,
+  artwork timing), plus log retention.
+- **Recent playback:** per playback, the app, startup speed and average segment delivery time.
+- **Recent events:** filter by kind; click one to see everything recorded.
+- **Log files:** download a day's log.
+
 ## Modes
 - **Off**: does nothing.
 - **Watch only** (default): records playback data and never changes playback.

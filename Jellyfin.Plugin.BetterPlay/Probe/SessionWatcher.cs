@@ -7,10 +7,11 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.BetterPlay.Probe;
 
 /// <summary>
-/// Records playback start / progress / stop as each client reports them: how often, what position, paused or not,
-/// how it is being played and, when transcoding, what the transcode is doing.
+/// Records playback start / progress / stop as each app reports them: how often, what position, paused or not, how
+/// it is being played and, when transcoding, what the transcode is doing. Handlers never throw: they run inside
+/// Jellyfin's own session handling.
 /// </summary>
-public class SessionWatcher : IHostedService
+public sealed class SessionWatcher : IHostedService
 {
     private readonly ISessionManager _sessions;
     private readonly ProbeLog _log;
@@ -28,7 +29,7 @@ public class SessionWatcher : IHostedService
         _sessions.PlaybackStart += OnStart;
         _sessions.PlaybackProgress += OnProgress;
         _sessions.PlaybackStopped += OnStopped;
-        _logger.LogInformation("BetterPlay probe: watching playback sessions");
+        _logger.LogInformation("BetterPlay: watching playback sessions");
         return Task.CompletedTask;
     }
 
@@ -40,18 +41,35 @@ public class SessionWatcher : IHostedService
         return Task.CompletedTask;
     }
 
-    private void OnStart(object? sender, PlaybackProgressEventArgs e) => Record("start", e);
+    private void OnStart(object? sender, PlaybackProgressEventArgs e) => Record("start", e, null);
 
-    private void OnProgress(object? sender, PlaybackProgressEventArgs e) => Record("progress", e);
+    private void OnProgress(object? sender, PlaybackProgressEventArgs e) => Record("progress", e, null);
 
-    private void OnStopped(object? sender, PlaybackStopEventArgs e)
+    private void OnStopped(object? sender, PlaybackStopEventArgs e) => Record("stop", e, e.PlayedToCompletion);
+
+    private void Record(string kind, PlaybackProgressEventArgs e, bool? playedToCompletion)
     {
-        var o = Describe(e);
-        o["playedToCompletion"] = e.PlayedToCompletion;
-        _log.Write("stop", o);
-    }
+        try
+        {
+            _log.Seen("session-events");
+            if (ProbeLog.Config?.RecordPlaybackReports != true)
+            {
+                return;
+            }
 
-    private void Record(string kind, PlaybackProgressEventArgs e) => _log.Write(kind, Describe(e));
+            var o = Describe(e);
+            if (playedToCompletion.HasValue)
+            {
+                o["playedToCompletion"] = playedToCompletion.Value;
+            }
+
+            _log.Write(kind, o);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "BetterPlay: could not record a playback event");
+        }
+    }
 
     private static JsonObject Describe(PlaybackProgressEventArgs e)
     {
@@ -61,6 +79,7 @@ public class SessionWatcher : IHostedService
             ["playSessionId"] = e.PlaySessionId,
             ["sessionId"] = s?.Id,
             ["client"] = e.ClientName,
+            ["clientVersion"] = s?.ApplicationVersion,
             ["device"] = e.DeviceName,
             ["deviceId"] = e.DeviceId,
             ["remote"] = s?.RemoteEndPoint,
@@ -72,7 +91,7 @@ public class SessionWatcher : IHostedService
             ["paused"] = e.IsPaused,
             ["automated"] = e.IsAutomated,
             ["playMethod"] = s?.PlayState?.PlayMethod?.ToString(),
-            ["canSeek"] = s?.PlayState?.CanSeek,
+            ["supportsRemoteControl"] = s?.SupportsRemoteControl,
         };
         var t = s?.TranscodingInfo;
         if (t is not null)

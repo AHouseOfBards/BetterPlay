@@ -5,66 +5,295 @@
     <title>BetterPlay</title>
 </head>
 <body>
-    <div id="BetterPlayConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-select,emby-checkbox">
-        <div data-role="content">
-            <div class="content-primary">
-                <h2>BetterPlay</h2>
-                <p>This release is a <b>probe</b>: it records how each app asks for and plays video, so the next releases can choose
-                   versions and prevent freezes. It never changes playback.</p>
+<div id="BetterPlayConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-select,emby-checkbox">
+    <div data-role="content">
+        <div class="content-primary">
+            <style>
+                #BetterPlayConfigPage .bp-card { background: rgba(127,127,127,.08); border-radius: 8px; padding: 1em 1.2em; margin: 0 0 1.2em; }
+                #BetterPlayConfigPage .bp-card h3 { margin: 0 0 .6em; }
+                #BetterPlayConfigPage table { width: 100%; border-collapse: collapse; font-size: .92em; }
+                #BetterPlayConfigPage th, #BetterPlayConfigPage td { text-align: left; padding: .35em .5em; border-bottom: 1px solid rgba(127,127,127,.2); vertical-align: top; }
+                #BetterPlayConfigPage .bp-ok { color: #4caf50; font-weight: 600; }
+                #BetterPlayConfigPage .bp-wait { opacity: .7; }
+                #BetterPlayConfigPage .bp-muted { opacity: .7; font-size: .9em; }
+                #BetterPlayConfigPage .bp-row { display: flex; gap: .6em; flex-wrap: wrap; align-items: flex-end; }
+                #BetterPlayConfigPage .bp-row > * { flex: 1 1 10em; }
+                #BetterPlayConfigPage pre { white-space: pre-wrap; word-break: break-word; max-height: 24em; overflow: auto; font-size: .82em; background: rgba(0,0,0,.25); padding: .6em; border-radius: 4px; margin: .3em 0 0; }
+                #BetterPlayConfigPage .bp-event { cursor: pointer; }
+                #BetterPlayConfigPage .bp-scroll { overflow-x: auto; }
+            </style>
+
+            <h2>BetterPlay</h2>
+            <p class="bp-muted">Probe release: BetterPlay records how each app asks for and plays video, so later releases can choose
+                versions and prevent freezes. In this release it <b>never changes playback</b>.</p>
+
+            <!-- Status -->
+            <div class="bp-card">
+                <h3>Status</h3>
+                <div id="bpStatusLine" class="bp-muted">Loading…</div>
+                <div class="bp-scroll">
+                    <table>
+                        <thead><tr><th>Hook</th><th>What it shows</th><th>Working?</th><th>Times seen</th><th>Last seen</th></tr></thead>
+                        <tbody id="bpHooks"></tbody>
+                    </table>
+                </div>
+                <p class="bp-muted">Hooks that show "not seen yet" start reporting once someone browses or plays something.</p>
+                <div class="bp-row">
+                    <button is="emby-button" type="button" id="bpRefresh" class="raised emby-button"><span>Refresh</span></button>
+                    <button is="emby-button" type="button" id="bpClear" class="raised emby-button"><span>Clear recent events</span></button>
+                </div>
+            </div>
+
+            <!-- Settings -->
+            <div class="bp-card">
+                <h3>Settings</h3>
                 <form id="BetterPlayConfigForm">
                     <div class="selectContainer">
-                        <label class="selectLabel" for="Mode">Mode</label>
-                        <select is="emby-select" id="Mode" name="Mode" class="emby-select-withcolor emby-select">
-                            <option value="Off">Off: do nothing</option>
+                        <label class="selectLabel" for="bpMode">Mode</label>
+                        <select is="emby-select" id="bpMode" class="emby-select-withcolor emby-select">
+                            <option value="Off">Off: do nothing at all</option>
                             <option value="WatchOnly">Watch only: record, never change playback</option>
                         </select>
                     </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="ProbeLogDays">Days of probe logs to keep</label>
-                        <input id="ProbeLogDays" name="ProbeLogDays" type="number" is="emby-input" min="1" max="90" />
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label class="emby-checkbox-label"><input id="bpRecordPlaybackInfo" type="checkbox" is="emby-checkbox" /><span>Record play requests</span></label>
+                        <div class="fieldDescription checkboxFieldDescription">What each app asks for when you press play, and which versions Jellyfin offers back.</div>
                     </div>
                     <div class="checkboxContainer checkboxContainer-withDescription">
-                        <label class="emby-checkbox-label">
-                            <input id="ProbeLogDeviceProfiles" name="ProbeLogDeviceProfiles" type="checkbox" is="emby-checkbox" />
-                            <span>Record each app's full device profile</span>
-                        </label>
-                        <div class="fieldDescription checkboxFieldDescription">Large, but shows exactly what each app says it can play.</div>
+                        <label class="emby-checkbox-label"><input id="bpRecordDeviceProfiles" type="checkbox" is="emby-checkbox" /><span>Include full device profiles</span></label>
+                        <div class="fieldDescription checkboxFieldDescription">Exactly what each app says it can play. Large; stored in the log files only.</div>
                     </div>
-                    <div>
-                        <button is="emby-button" type="submit" class="raised button-submit block emby-button">
-                            <span>Save</span>
-                        </button>
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label class="emby-checkbox-label"><input id="bpRecordPlaybackReports" type="checkbox" is="emby-checkbox" /><span>Record playback reports</span></label>
+                        <div class="fieldDescription checkboxFieldDescription">Start, progress and stop reports: position, paused, how it is being played.</div>
                     </div>
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label class="emby-checkbox-label"><input id="bpRecordVideoDelivery" type="checkbox" is="emby-checkbox" /><span>Time video delivery</span></label>
+                        <div class="fieldDescription checkboxFieldDescription">How long each video segment or file chunk takes to send. This is how BetterPlay will spot buffering.</div>
+                    </div>
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label class="emby-checkbox-label"><input id="bpRecordImages" type="checkbox" is="emby-checkbox" /><span>Time artwork downloads</span></label>
+                        <div class="fieldDescription checkboxFieldDescription">Posters while browsing: a speed sample before play is pressed. Frequent; switch off if the logs get too big.</div>
+                    </div>
+                    <div class="bp-row">
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="bpProbeLogDays">Days of log files to keep</label>
+                            <input id="bpProbeLogDays" type="number" is="emby-input" min="1" max="365" />
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="bpMemoryEvents">Recent events kept for this page</label>
+                            <input id="bpMemoryEvents" type="number" is="emby-input" min="100" max="20000" />
+                        </div>
+                    </div>
+                    <button is="emby-button" type="submit" class="raised button-submit block emby-button"><span>Save</span></button>
                 </form>
             </div>
+
+            <!-- Sessions -->
+            <div class="bp-card">
+                <h3>Recent playback (last 3 hours)</h3>
+                <div class="bp-scroll">
+                    <table>
+                        <thead><tr><th>Started</th><th>App / device / method</th><th>Startup speed</th><th>Segments</th><th>Avg segment time</th><th>Data</th></tr></thead>
+                        <tbody id="bpSessions"></tbody>
+                    </table>
+                </div>
+                <p class="bp-muted">Startup speed is how fast the first 10 seconds of video arrived. A transcoded segment holds about 3 s of video (6 s when copied), so an average delivery time near or above that means the connection can't keep up.</p>
+            </div>
+
+            <!-- Events -->
+            <div class="bp-card">
+                <h3>Recent events</h3>
+                <div class="bp-row">
+                    <div class="selectContainer">
+                        <label class="selectLabel" for="bpKind">Kind</label>
+                        <select is="emby-select" id="bpKind" class="emby-select-withcolor emby-select">
+                            <option value="">All</option>
+                            <option value="playbackinfo">Play requests</option>
+                            <option value="start">Playback started</option>
+                            <option value="progress">Progress reports</option>
+                            <option value="stop">Playback stopped</option>
+                            <option value="delivery">Video delivery</option>
+                            <option value="image">Artwork</option>
+                        </select>
+                    </div>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="bpMinutes">Last minutes</label>
+                        <input id="bpMinutes" type="number" is="emby-input" min="1" max="10080" value="30" />
+                    </div>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="bpLimit">Show at most</label>
+                        <input id="bpLimit" type="number" is="emby-input" min="1" max="5000" value="100" />
+                    </div>
+                    <button is="emby-button" type="button" id="bpLoadEvents" class="raised emby-button"><span>Show</span></button>
+                </div>
+                <div class="bp-scroll">
+                    <table>
+                        <thead><tr><th>Time</th><th>Kind</th><th>Summary</th></tr></thead>
+                        <tbody id="bpEvents"></tbody>
+                    </table>
+                </div>
+                <p class="bp-muted">Click an event to see everything recorded. API keys and tokens are removed before anything is stored.</p>
+            </div>
+
+            <!-- Log files -->
+            <div class="bp-card">
+                <h3>Log files</h3>
+                <div id="bpLogs" class="bp-muted">None yet.</div>
+            </div>
         </div>
-        <script type="text/javascript">
-            var BetterPlayConfig = { pluginUniqueId: '575fdaea-52dd-4363-a84b-69c5c52daded' };
+    </div>
 
-            document.querySelector('#BetterPlayConfigPage').addEventListener('pageshow', function () {
-                Dashboard.showLoadingMsg();
-                ApiClient.getPluginConfiguration(BetterPlayConfig.pluginUniqueId).then(function (config) {
-                    document.querySelector('#Mode').value = config.Mode;
-                    document.querySelector('#ProbeLogDays').value = config.ProbeLogDays;
-                    document.querySelector('#ProbeLogDeviceProfiles').checked = config.ProbeLogDeviceProfiles;
-                    Dashboard.hideLoadingMsg();
+    <script type="text/javascript">
+        (function () {
+            var pluginId = '575fdaea-52dd-4363-a84b-69c5c52daded';
+            var page = document.querySelector('#BetterPlayConfigPage');
+            var timer = null;
+
+            var hookInfo = [
+                ['api-filter', 'Jellyfin API hook', 'Sees every API call (needed to read play requests)'],
+                ['playbackinfo-hook', 'Play request hook', 'What apps ask for when play is pressed'],
+                ['middleware', 'Request timer', 'Times what the server sends (video, artwork)'],
+                ['session-events', 'Playback reports', 'Start / progress / stop from each app']
+            ];
+
+            function $(sel) { return page.querySelector(sel); }
+            function el(tag, text, cls) { var e = document.createElement(tag); if (text !== undefined && text !== null) { e.textContent = text; } if (cls) { e.className = cls; } return e; }
+            function row(cells) { var tr = document.createElement('tr'); cells.forEach(function (c) { var td = document.createElement('td'); if (c instanceof Node) { td.appendChild(c); } else { td.textContent = c === undefined || c === null ? '' : c; } tr.appendChild(td); }); return tr; }
+            function url(path, params) { return ApiClient.getUrl('BetterPlay/' + path, params || {}); }
+            function when(iso) { if (!iso) { return '—'; } var d = new Date(iso); return isNaN(d) ? iso : d.toLocaleString(); }
+            function ago(iso) { if (!iso) { return '—'; } var s = Math.round((Date.now() - new Date(iso)) / 1000); if (s < 60) { return s + ' s ago'; } if (s < 3600) { return Math.round(s / 60) + ' min ago'; } return Math.round(s / 3600) + ' h ago'; }
+            function ticks(t) { if (t === null || t === undefined) { return '—'; } var s = Math.floor(t / 1e7); var h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60; return (h ? h + ':' : '') + (h && m < 10 ? '0' : '') + m + ':' + (x < 10 ? '0' : '') + x; }
+            function kb(b) { if (b === null || b === undefined) { return '—'; } return b >= 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.round(b / 1e3) + ' KB'; }
+
+            function loadConfig() {
+                return ApiClient.getPluginConfiguration(pluginId).then(function (c) {
+                    $('#bpMode').value = c.Mode === 'Off' ? 'Off' : 'WatchOnly';
+                    $('#bpRecordPlaybackInfo').checked = c.RecordPlaybackInfo;
+                    $('#bpRecordDeviceProfiles').checked = c.RecordDeviceProfiles;
+                    $('#bpRecordPlaybackReports').checked = c.RecordPlaybackReports;
+                    $('#bpRecordVideoDelivery').checked = c.RecordVideoDelivery;
+                    $('#bpRecordImages').checked = c.RecordImages;
+                    $('#bpProbeLogDays').value = c.ProbeLogDays;
+                    $('#bpMemoryEvents').value = c.MemoryEvents;
                 });
-            });
+            }
 
-            document.querySelector('#BetterPlayConfigForm').addEventListener('submit', function (e) {
-                Dashboard.showLoadingMsg();
-                ApiClient.getPluginConfiguration(BetterPlayConfig.pluginUniqueId).then(function (config) {
-                    config.Mode = document.querySelector('#Mode').value;
-                    config.ProbeLogDays = parseInt(document.querySelector('#ProbeLogDays').value, 10) || 14;
-                    config.ProbeLogDeviceProfiles = document.querySelector('#ProbeLogDeviceProfiles').checked;
-                    ApiClient.updatePluginConfiguration(BetterPlayConfig.pluginUniqueId, config).then(function (result) {
-                        Dashboard.processPluginConfigurationUpdateResult(result);
+            function loadStatus() {
+                return ApiClient.getJSON(url('Status')).then(function (s) {
+                    $('#bpStatusLine').textContent = 'Version ' + s.version + ' · mode: ' + (s.mode === 'WatchOnly' ? 'Watch only' : s.mode)
+                        + (s.droppedEvents ? ' · ' + s.droppedEvents + ' events could not be written' : '');
+                    var body = $('#bpHooks'); body.innerHTML = '';
+                    hookInfo.forEach(function (h) {
+                        var st = (s.hooks || {})[h[0]];
+                        var ok = st && st.count > 0;
+                        body.appendChild(row([h[1], h[2], el('span', ok ? 'Yes' : 'Not seen yet', ok ? 'bp-ok' : 'bp-wait'), ok ? st.count : 0, ok ? ago(st.last) : '—']));
+                    });
+                    var logs = $('#bpLogs'); logs.innerHTML = '';
+                    if (!s.logFiles || !s.logFiles.length) { logs.textContent = 'None yet.'; return; }
+                    var t = document.createElement('table');
+                    s.logFiles.forEach(function (f) {
+                        var b = el('button', 'Download'); b.type = 'button'; b.className = 'raised emby-button';
+                        b.addEventListener('click', function () { download(f.name); });
+                        t.appendChild(row([f.name, f.kb + ' KB', b]));
+                    });
+                    logs.appendChild(t);
+                }, function () { $('#bpStatusLine').textContent = 'Could not reach BetterPlay. Is the server restarted after install?'; });
+            }
+
+            function loadSessions() {
+                return ApiClient.getJSON(url('Sessions', { minutes: 180 })).then(function (list) {
+                    var body = $('#bpSessions'); body.innerHTML = '';
+                    if (!list.length) { body.appendChild(row(['No playback recorded yet.', '', '', '', '', ''])); return; }
+                    list.sort(function (a, b) { return a.first < b.first ? 1 : -1; }).forEach(function (x) {
+                        body.appendChild(row([when(x.first), x.client || '(unknown app)',
+                            x.startupBurstMbps === null ? '—' : x.startupBurstMbps + ' Mbps', x.segments,
+                            x.avgSegmentMs === null ? '—' : (x.avgSegmentMs / 1000).toFixed(2) + ' s', x.mb + ' MB']));
                     });
                 });
-                e.preventDefault();
+            }
+
+            function summary(e) {
+                switch (e.kind) {
+                    case 'playbackinfo':
+                        var srcs = (e.response && e.response.mediaSources) || [];
+                        var a = e.auth || {};
+                        return (a.Client || e.userAgent || 'app') + ' asked to play; ' + srcs.length + ' version(s) offered'
+                            + (srcs.length ? ', first: ' + (srcs[0].name || '') + ' (' + (srcs[0].directPlay ? 'direct play' : srcs[0].directStream ? 'remux' : 'transcode') + ')' : '');
+                    case 'start': case 'progress': case 'stop':
+                        return (e.client || '') + ' · ' + (e.item || '') + ' · ' + ticks(e.positionTicks) + (e.paused ? ' (paused)' : '') + ' · ' + (e.playMethod || '')
+                            + (e.transcode ? ' · ' + Math.round((e.transcode.bitrate || 0) / 1e5) / 10 + ' Mbps ' + (e.transcode.videoCodec || '') : '');
+                    case 'delivery': case 'image':
+                        var p = e.path || ''; if (p.length > 70) { p = '…' + p.slice(-70); }
+                        return p + ' · ' + kb(e.bytes) + ' in ' + (e.totalMs === undefined ? '?' : Math.round(e.totalMs)) + ' ms' + (e.segment !== null && e.segment !== undefined ? ' · segment ' + e.segment : '') + (e.aborted ? ' · aborted' : '');
+                    default:
+                        return '';
+                }
+            }
+
+            function loadEvents() {
+                var params = { minutes: $('#bpMinutes').value || 30, limit: $('#bpLimit').value || 100 };
+                if ($('#bpKind').value) { params.kind = $('#bpKind').value; }
+                return ApiClient.getJSON(url('Probe', params)).then(function (list) {
+                    var body = $('#bpEvents'); body.innerHTML = '';
+                    if (!list.length) { body.appendChild(row(['', '', 'Nothing in this time window.'])); return; }
+                    list.reverse().forEach(function (e) {
+                        var tr = row([when(e.t), e.kind, summary(e)]);
+                        tr.className = 'bp-event';
+                        tr.addEventListener('click', function () {
+                            var next = tr.nextSibling;
+                            if (next && next.dataset && next.dataset.detail) { next.remove(); return; }
+                            var d = document.createElement('tr'); d.dataset.detail = '1';
+                            var td = document.createElement('td'); td.colSpan = 3;
+                            td.appendChild(el('pre', JSON.stringify(e, null, 2)));
+                            d.appendChild(td); tr.parentNode.insertBefore(d, tr.nextSibling);
+                        });
+                        body.appendChild(tr);
+                    });
+                });
+            }
+
+            function download(name) {
+                fetch(url('Logs/' + encodeURIComponent(name)), { headers: { Authorization: 'MediaBrowser Token="' + ApiClient.accessToken() + '"' } })
+                    .then(function (r) { if (!r.ok) { throw new Error(r.status); } return r.blob(); })
+                    .then(function (b) { var a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'betterplay-' + name; document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000); })
+                    .catch(function () { Dashboard.alert('Could not download ' + name); });
+            }
+
+            function refreshAll() { loadStatus(); loadSessions(); }
+
+            page.addEventListener('pageshow', function () {
+                Dashboard.showLoadingMsg();
+                Promise.all([loadConfig(), loadStatus(), loadSessions()]).finally(function () { Dashboard.hideLoadingMsg(); });
+                clearInterval(timer);
+                timer = setInterval(refreshAll, 10000);
+            });
+            page.addEventListener('pagehide', function () { clearInterval(timer); timer = null; });
+
+            $('#bpRefresh').addEventListener('click', refreshAll);
+            $('#bpLoadEvents').addEventListener('click', loadEvents);
+            $('#bpClear').addEventListener('click', function () {
+                ApiClient.ajax({ type: 'POST', url: url('Clear') }).then(function () { loadEvents(); refreshAll(); });
+            });
+
+            $('#BetterPlayConfigForm').addEventListener('submit', function (ev) {
+                ev.preventDefault();
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(pluginId).then(function (c) {
+                    c.Mode = $('#bpMode').value;
+                    c.RecordPlaybackInfo = $('#bpRecordPlaybackInfo').checked;
+                    c.RecordDeviceProfiles = $('#bpRecordDeviceProfiles').checked;
+                    c.RecordPlaybackReports = $('#bpRecordPlaybackReports').checked;
+                    c.RecordVideoDelivery = $('#bpRecordVideoDelivery').checked;
+                    c.RecordImages = $('#bpRecordImages').checked;
+                    c.ProbeLogDays = parseInt($('#bpProbeLogDays').value, 10) || 14;
+                    c.MemoryEvents = parseInt($('#bpMemoryEvents').value, 10) || 3000;
+                    return ApiClient.updatePluginConfiguration(pluginId, c);
+                }).then(function (r) { Dashboard.processPluginConfigurationUpdateResult(r); loadStatus(); });
                 return false;
             });
-        </script>
-    </div>
+        })();
+    </script>
+</div>
 </body>
 </html>
