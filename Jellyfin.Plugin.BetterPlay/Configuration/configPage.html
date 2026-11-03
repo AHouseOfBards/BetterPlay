@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>BetterPlay</title>
+</head>
+<body>
+    <div id="BetterPlayConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-select,emby-checkbox">
+        <div data-role="content">
+            <div class="content-primary">
+                <h2>BetterPlay</h2>
+                <p>This release is a <b>probe</b>: it records how each app asks for and plays video, so the next releases can choose
+                   versions and prevent freezes. It never changes playback.</p>
+                <form id="BetterPlayConfigForm">
+                    <div class="selectContainer">
+                        <label class="selectLabel" for="Mode">Mode</label>
+                        <select is="emby-select" id="Mode" name="Mode" class="emby-select-withcolor emby-select">
+                            <option value="Off">Off: do nothing</option>
+                            <option value="WatchOnly">Watch only: record, never change playback</option>
+                        </select>
+                    </div>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="ProbeLogDays">Days of probe logs to keep</label>
+                        <input id="ProbeLogDays" name="ProbeLogDays" type="number" is="emby-input" min="1" max="90" />
+                    </div>
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label class="emby-checkbox-label">
+                            <input id="ProbeLogDeviceProfiles" name="ProbeLogDeviceProfiles" type="checkbox" is="emby-checkbox" />
+                            <span>Record each app's full device profile</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">Large, but shows exactly what each app says it can play.</div>
+                    </div>
+                    <div>
+                        <button is="emby-button" type="submit" class="raised button-submit block emby-button">
+                            <span>Save</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <script type="text/javascript">
+            var BetterPlayConfig = { pluginUniqueId: '575fdaea-52dd-4363-a84b-69c5c52daded' };
+
+            document.querySelector('#BetterPlayConfigPage').addEventListener('pageshow', function () {
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(BetterPlayConfig.pluginUniqueId).then(function (config) {
+                    document.querySelector('#Mode').value = config.Mode;
+                    document.querySelector('#ProbeLogDays').value = config.ProbeLogDays;
+                    document.querySelector('#ProbeLogDeviceProfiles').checked = config.ProbeLogDeviceProfiles;
+                    Dashboard.hideLoadingMsg();
+                });
+            });
+
+            document.querySelector('#BetterPlayConfigForm').addEventListener('submit', function (e) {
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(BetterPlayConfig.pluginUniqueId).then(function (config) {
+                    config.Mode = document.querySelector('#Mode').value;
+                    config.ProbeLogDays = parseInt(document.querySelector('#ProbeLogDays').value, 10) || 14;
+                    config.ProbeLogDeviceProfiles = document.querySelector('#ProbeLogDeviceProfiles').checked;
+                    ApiClient.updatePluginConfiguration(BetterPlayConfig.pluginUniqueId, config).then(function (result) {
+                        Dashboard.processPluginConfigurationUpdateResult(result);
+                    });
+                });
+                e.preventDefault();
+                return false;
+            });
+        </script>
+    </div>
+</body>
+</html>

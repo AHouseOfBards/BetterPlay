@@ -1,0 +1,21 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Releases are built against 12.0.0 (loads on every 12.x); the newer ones catch API changes early.
+        jellyfin: ['12.0.0', '12.1.0', '12.2.0', '12.3.0', '12.4.0']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build against Jellyfin ${{ matrix.jellyfin }}
+        run: dotnet build Jellyfin.Plugin.BetterPlay -c Release -p:JellyfinVersion=${{ matrix.jellyfin }}

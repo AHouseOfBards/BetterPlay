@@ -1,0 +1,12 @@
+[
+  {
+    "guid": "575fdaea-52dd-4363-a84b-69c5c52daded",
+    "name": "BetterPlay",
+    "description": "Picks the best version and bitrate for each viewer's connection and keeps playback from freezing.",
+    "overview": "Smart version selection, adaptive streaming and freeze prevention for every client.",
+    "owner": "AHouseOfBards",
+    "category": "General",
+    "imageUrl": "",
+    "versions": []
+  }
+]
