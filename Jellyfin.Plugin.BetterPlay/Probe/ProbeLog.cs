@@ -15,8 +15,9 @@ namespace Jellyfin.Plugin.BetterPlay.Probe;
 /// </summary>
 public sealed class ProbeLog : IDisposable
 {
+    // Not \b: JSON writes & as &, so "&ApiKey=" has a digit right before the name and \b never matches.
     private static readonly Regex Secrets = new(
-        @"(?i)\b(api_?key|access_?token|token|x-emby-token|x-mediabrowser-token)(=(?:\\u0022|"")?|"":\s*""|\\u0022:\\u0022)[^&""\s\\]+",
+        @"(?i)(?<![a-z])(api_?key|access_?token|token|x-emby-token|x-mediabrowser-token)(=(?:\\u0022|"")?|"":\s*""|\\u0022:\\u0022|:\s*)[^&""\s\\]+",
         RegexOptions.Compiled);
 
     private const int ImageMemoryLimit = 500;
@@ -195,6 +196,8 @@ public sealed class ProbeLog : IDisposable
         var batch = new List<string>();
         try
         {
+            ScrubExisting();
+
             while (await _disk.Reader.WaitToReadAsync(_stop.Token).ConfigureAwait(false))
             {
                 // Group what's waiting by day, append each group in one go.
@@ -252,6 +255,34 @@ public sealed class ProbeLog : IDisposable
         }
 
         lines.Clear();
+    }
+
+    /// <summary>Re-applies redaction to log files already on disk (written by an older version with weaker redaction).</summary>
+    private void ScrubExisting()
+    {
+        try
+        {
+            if (Folder is not { } folder || !Directory.Exists(folder))
+            {
+                return;
+            }
+
+            foreach (var f in Directory.GetFiles(folder, "*.jsonl"))
+            {
+                var text = File.ReadAllText(f);
+                var clean = Redact(text);
+                if (clean != text)
+                {
+                    File.WriteAllText(f + ".tmp", clean);
+                    File.Move(f + ".tmp", f, true);
+                    _logger.LogInformation("BetterPlay probe: removed keys from {File}", Path.GetFileName(f));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "BetterPlay probe: could not scrub old log files");
+        }
     }
 
     private void Cleanup()
