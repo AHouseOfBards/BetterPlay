@@ -61,13 +61,18 @@ Jellyfin's own behaviour.
 | **Chromecast** (Jellyfin receiver) | Yes, itself | `getOptimalMediaSource` | Yes; reads the max bitrate once, no retry on error | Through the casting app (Web/Android) | Server-side ABR or variants: **seamless** |
 | **Swiftfin** (iOS/tvOS) | Yes (*details unverified*) | *unverified* | *unverified* | **SetMaxStreamingBitrate** handled | Server-side ABR, or SetMaxStreamingBitrate |
 | **Kodi add-on** | Yes (add-on mode) | Own picker when several | Yes: direct path only if direct play is allowed; else static or `TranscodingUrl` | *unverified* | Force HLS, then server-side ABR. **Native mode bypasses Jellyfin entirely** |
-| **Infuse** | Reads the library, but plays via static/download | Its own | **No**: no Jellyfin transcoding (Firecore staff) | None | **None mid-film.** Choose the file at the start of the request; detect from delivered bytes; learn for next time |
+| **Infuse** | Reads the library, but plays via static/download | Its own | **No** for Jellyfin's normal transcoding (Firecore staff) | None | **Safe today:** choose which real file to serve at the start of the request. **Experiments:** (a) a *virtual file*: answer the file request with a live Matroska encode with no index, an estimated size and correct timestamps; map each byte-range request to a time and start the encoder there; the bitrate can then change freely while Infuse believes it's direct playing; (b) a redirect to HLS |
 | Plezy, Streamyfin, Findroid, Wholphin, Moonfin, Fladder, VidHub, Dune, FluentFin | *unverified* | | | | Rule: if it asks PlaybackInfo, it can be steered. The probe will tell |
 
 ## 6. Real limits
 
-1. **Byte-exact file reads** (Infuse, any direct play in progress): the content can't change mid-file. Only the start
-   of a request can be redirected.
+1. **Byte-exact file reads** (any direct play of the real file in progress): that file's content can't change mid-file.
+   Ways around it: serve a different real file at the start of a request, or serve a **virtual file** from the start
+   (a live encode without an index, so the player seeks by timestamps, not byte offsets). Virtual-file risks: seeks
+   land within a few seconds of the target, the size is estimated, the player may read several positions in parallel
+   (serve them from one encode), downloads use the same address (must be told apart), and HDR / Dolby Vision
+   passthrough. The probe must record per app: user agent, range pattern, parallel connections, end-of-file reads, and
+   how downloads differ from streaming.
 2. **Apps that never ask Jellyfin** (Kodi native paths): invisible.
 3. **Cross-file switching mid-film** needs timeline alignment (Iron Man 3's versions differ by 37 s) plus
    discontinuity handling.

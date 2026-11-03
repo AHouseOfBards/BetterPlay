@@ -98,10 +98,12 @@ public class DeliveryMeterStartupFilter : IStartupFilter
         && (path.StartsWith("/Items/", StringComparison.OrdinalIgnoreCase) || path.StartsWith("/Users/", StringComparison.OrdinalIgnoreCase));
 
     private static bool IsVideoDelivery(string path) =>
-        path.StartsWith("/videos/", StringComparison.OrdinalIgnoreCase)
-        && (path.Contains("/hls", StringComparison.OrdinalIgnoreCase)
-            || path.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase)
-            || path.Contains("/stream", StringComparison.OrdinalIgnoreCase));
+        (path.StartsWith("/videos/", StringComparison.OrdinalIgnoreCase)
+         && (path.Contains("/hls", StringComparison.OrdinalIgnoreCase)
+             || path.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase)
+             || path.Contains("/stream", StringComparison.OrdinalIgnoreCase)))
+        // Apps that read the raw file (e.g. Infuse) may use the download endpoint instead.
+        || (path.StartsWith("/Items/", StringComparison.OrdinalIgnoreCase) && path.EndsWith("/Download", StringComparison.OrdinalIgnoreCase));
 
     private sealed class CountingStream : Stream
     {
