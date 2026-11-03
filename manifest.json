@@ -8,6 +8,14 @@
         "category":  "General",
         "versions":  [
                          {
+                             "version":  "0.1.0.1",
+                             "changelog":  "Security fix: API keys inside transcode URLs were not removed from the probe log. Fixed, and existing log files are cleaned on startup. Update and restart.",
+                             "targetAbi":  "12.0.0.0",
+                             "sourceUrl":  "https://github.com/AHouseOfBards/BetterPlay/releases/download/v0.1.0.1/betterplay_0.1.0.1.zip",
+                             "checksum":  "aa639dc954843cf260742aee32e71251",
+                             "timestamp":  "2026-11-03T22:55:55Z"
+                         },
+                         {
                              "version":  "0.1.0.0",
                              "changelog":  "Probe release (watch only): records how each app requests and plays video, never changes playback. Dashboard page with status, hook health, settings, recent playback and events, log downloads.",
                              "targetAbi":  "12.0.0.0",
