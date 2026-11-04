@@ -20,6 +20,37 @@ must be safe on a live server:
 
 ---
 
+## 0. Goal: one feature set on every client
+
+The core feature is the same on every app: **play the original file when the connection carries it. When it
+doesn't, adjust transcode quality step by step to match real network conditions, then step back up toward the
+original.** To get the same behaviour everywhere, BetterPlay doesn't rely on what each app can do. It owns delivery
+for remote viewers, and changes what the server offers and sends:
+
+| Layer | What BetterPlay does | Why it works on every app |
+|---|---|---|
+| **Offer (spoof PlaybackInfo)** | For a remote viewer whose device isn't yet proven, answer with "direct play: no, direct stream: yes", so the app takes an HLS stream of the original. Choose the version and order. | Every app plays what the server says it can. Each app decides only from the flags in the answer. |
+| **Original-first HLS ("copy rung")** | The stream starts as a remux of the original: video copied, untouched quality, with audio converted only if needed. | Same quality as direct play, but delivered in segments the server controls. |
+| **Server-side ladder** | When request timing shows the buffer draining, the next segments are produced by a transcode a step lower (copy, then for example 20, 15, 10, 8, 6, 4 Mbps), cut at the same segment boundaries. Step up the same way, back to copy. | The app keeps fetching the same playlist and segment numbers and never knows. Works on any HLS app, with no app support needed. |
+| **Virtual file (apps that only read files: Infuse, Kodi native)** | Answer the file or download request with a live stream in the original container, original quality first, re-encoded lower when reads fall behind. | The app thinks it's reading the file. Seeking maps byte ranges to time (experiment). |
+| **Remote command (bonus)** | Web and Swiftfin get `SetMaxStreamingBitrate`; Android TV gets Play-at-position, when a restart is faster than waiting for the ladder. | A last-resort rescue, not the main mechanism. |
+
+**Signal for every app: the timing of the player's requests.** A player asks for the next segment, or the next byte
+range, after the previous one arrives. So on a link slower than the video, its requests come further apart than one
+segment length. A buffering reverse proxy such as nginx can't hide this, unlike byte timing, which behind a local
+proxy only measures the hand-off to the proxy. Progress reports add the position, so buffer ahead = requested video
+minus position. Implemented in `Probe/SessionAnalyzer.cs`.
+
+**Hard parts to prove before turning it on:**
+1. Switching copy → transcode mid-playlist with matching segment boundaries. Copy segments are cut on the source's
+   keyframes; the transcode must force keyframes at the same times.
+2. Making a mid-stream change of segment content and bitrate acceptable to each player (Web hls.js, ExoPlayer on
+   Android TV, AVPlayer on iOS, Roku).
+3. Serving the virtual file to Infuse and Kodi.
+4. The GPU and upload budgets when several remote viewers are on the ladder at once.
+
+---
+
 ## 1. What we know (verified on the user's server, Oct–Nov 2026)
 
 | Fact | Consequence |
@@ -27,7 +58,9 @@ must be safe on a live server:
 | Clients ask the server for `PlaybackInfo` before playing. Quick play from search or a poster sends no `MediaSourceId`, so Jellyfin Web plays the first version listed. Picking a version on the movie's page sends `MediaSourceId`. | The start-of-play choice works by ordering the list and setting the transcode bitrate. A version the user picked is always respected. |
 | Remote test: Jellyfin Web on Chrome with quality on Auto played the 4K Iron Man 3 at 17.6 Mbps as HLS fMP4 (video copied, audio to AAC). | Web already receives the video in chunks, which seamless switching needs. |
 | Jellyfin's built-in ABR (`DynamicHlsHelper`) only adds two variants 0.2–2 Mbps lower, only when transcoding, only from the same file, never on the LAN, and Jellyfin Web never asks for it. | Not usable; BetterPlay has to provide its own. |
-| Every remote viewer shows as `127.0.0.1` (nginx in front of Jellyfin, `KnownProxies` empty). | Real addresses (nginx `X-Forwarded-For` plus `KnownProxies`) are a **prerequisite** for telling home viewers from remote ones and for remembering a device's network. |
+| Every remote viewer shows as `127.0.0.1`. nginx already sends `X-Forwarded-For`, but `KnownProxies` is empty. | Add `127.0.0.1` to `KnownProxies` (the dashboard warns when this is missing). |
+| nginx buffering is on and stays on (the user's choice). Server-side segment delivery measured 100–500+ Mbps to a remote browser. | Byte timing behind a local proxy is the hand-off to nginx, not the viewer, so health comes from request timing (section 0). |
+| Copy-mode HLS on Web: 6 s segments, requested steadily about every 6 s once the buffer is full. | A steady gap of about one segment length = keeping up; longer gaps = draining. |
 | Remote control: Jellyfin Web and Jellyfin for Android accept play commands, `PlayMediaSource` and `DisplayMessage`. Chromecast, Infuse and Plezy accept none. | Mid-film rescue by restart only works on some clients; the others get the start-of-play choice plus learning for next time. |
 | The two Iron Man 3 versions differ by 37 s in runtime (7,870 s vs 7,833 s). | Switching to a **different file** mid-film needs a timeline offset; switching the **same file's** transcode bitrate doesn't. |
 | NVENC is set up on the Jellyfin server (GPU model unknown). | Transcoding the same file down to a lower bitrate is affordable, which makes it the safest rescue. |

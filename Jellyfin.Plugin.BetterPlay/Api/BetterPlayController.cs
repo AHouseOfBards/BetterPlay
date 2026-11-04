@@ -2,6 +2,9 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Jellyfin.Plugin.BetterPlay.Probe;
 using MediaBrowser.Common.Api;
+using MediaBrowser.Common.Configuration;
+using MediaBrowser.Common.Net;
+using MediaBrowser.Controller.Configuration;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -15,10 +18,12 @@ public class BetterPlayController : ControllerBase
 {
     private static readonly Regex LogName = new(@"^\d{4}-\d{2}-\d{2}\.jsonl$", RegexOptions.Compiled);
     private readonly ProbeLog _log;
+    private readonly IServerConfigurationManager _config;
 
-    public BetterPlayController(ProbeLog log)
+    public BetterPlayController(ProbeLog log, IServerConfigurationManager config)
     {
         _log = log;
+        _config = config;
     }
 
     /// <summary>Version, mode, which hooks have fired on this server (and when), and the probe log files.</summary>
@@ -55,6 +60,7 @@ public class BetterPlayController : ControllerBase
             },
             ["hooks"] = hooks,
             ["droppedEvents"] = _log.Dropped,
+            ["server"] = ServerSnapshot(),
             ["serverTime"] = DateTime.UtcNow.ToString("O"),
             ["logFiles"] = files,
         };
@@ -75,53 +81,14 @@ public class BetterPlayController : ControllerBase
     }
 
     /// <summary>
-    /// One line per play session: the app, how fast the first 10 s of video arrived (startup burst), and how long
-    /// segments took on average.
+    /// One line per play session: state (Healthy / AtRisk / Stalled / Paused / Ended / Idle) read from the timing of
+    /// the player's requests, buffer ahead, late and repeated requests, seeks, and whether a proxy hides byte timing.
     /// </summary>
     [HttpGet("Sessions")]
     public ActionResult<JsonArray> Sessions([FromQuery] int minutes = 180)
     {
         var since = DateTime.UtcNow.AddMinutes(-Math.Clamp(minutes, 1, 10080));
-        var events = _log.Recent(since, null).ToList();
-        var clientOf = new Dictionary<string, string>();
-        foreach (var e in events)
-        {
-            if (Str(e, "kind") is "start" or "progress" && Str(e, "playSessionId") is { Length: > 0 } ps)
-            {
-                clientOf[ps] = $"{Str(e, "client")} on {Str(e, "device")} ({Str(e, "playMethod")})";
-            }
-        }
-
-        var arr = new JsonArray();
-        var deliveries = events.Where(e => Str(e, "kind") == "delivery" && Str(e, "playSessionId") is { Length: > 0 });
-        foreach (var g in deliveries.GroupBy(e => Str(e, "playSessionId")!))
-        {
-            var list = g.Select(e => new
-            {
-                T = ProbeLog.ParseTime(e) ?? DateTime.MinValue,
-                Bytes = Num(e, "bytes") ?? 0,
-                Ms = Num(e, "totalMs") ?? 0,
-                IsSegment = Num(e, "segment") is not null,
-            }).OrderBy(x => x.T).ToList();
-            var first = list[0].T;
-            var burst = list.Where(x => (x.T - first).TotalSeconds <= 10).ToList();
-            var burstMs = burst.Sum(x => x.Ms);
-            var segs = list.Where(x => x.IsSegment).ToList();
-            arr.Add(new JsonObject
-            {
-                ["playSessionId"] = g.Key,
-                ["client"] = clientOf.GetValueOrDefault(g.Key),
-                ["requests"] = list.Count,
-                ["mb"] = Math.Round(list.Sum(x => x.Bytes) / 1e6, 1),
-                ["startupBurstMbps"] = burstMs > 0 ? Math.Round(burst.Sum(x => x.Bytes) * 8 / 1e6 / (burstMs / 1000), 1) : null,
-                ["segments"] = segs.Count,
-                ["avgSegmentMs"] = segs.Count > 0 ? Math.Round(segs.Average(x => x.Ms)) : null,
-                ["first"] = first.ToString("O"),
-                ["last"] = list[^1].T.ToString("O"),
-            });
-        }
-
-        return arr;
+        return SessionAnalyzer.Summarize(_log.Recent(since, null).ToList(), DateTime.UtcNow);
     }
 
     /// <summary>Forgets the in-memory events (log files are kept).</summary>
@@ -151,25 +118,42 @@ public class BetterPlayController : ControllerBase
         return File(stream, "application/x-ndjson", "betterplay-" + name);
     }
 
-    private static string? Str(JsonObject e, string key) => e[key] is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
-
-    private static double? Num(JsonObject e, string key)
+    /// <summary>Server settings that change how playback behaves or how BetterPlay reads it, plus warnings.</summary>
+    private JsonObject ServerSnapshot()
     {
-        if (e[key] is not JsonValue v)
+        var o = new JsonObject();
+        var warnings = new JsonArray();
+        try
         {
-            return null;
+            var enc = _config.GetEncodingOptions();
+            o["hardwareAcceleration"] = enc.HardwareAccelerationType.ToString();
+            o["throttleTranscodes"] = enc.EnableThrottling;
+            o["throttleDelaySeconds"] = enc.ThrottleDelaySeconds;
+            o["deleteSegments"] = enc.EnableSegmentDeletion;
+            o["segmentKeepSeconds"] = enc.SegmentKeepSeconds;
+        }
+        catch (Exception ex)
+        {
+            o["encodingError"] = ex.GetType().Name;
         }
 
-        if (v.TryGetValue<double>(out var d))
+        try
         {
-            return d;
+            var net = _config.GetNetworkConfiguration();
+            o["knownProxies"] = new JsonArray(net.KnownProxies.Select(p => (JsonNode?)JsonValue.Create(p)).ToArray());
+            o["localSubnets"] = new JsonArray(net.LocalNetworkSubnets.Select(p => (JsonNode?)JsonValue.Create(p)).ToArray());
+            if (_log.Stats.TryGetValue("forwarded-from-loopback", out var fwd) && fwd.Count > 0 && net.KnownProxies.Length == 0)
+            {
+                warnings.Add("Requests arrive from a proxy on this machine (127.0.0.1) with the viewer's real address, but Known proxies is empty, "
+                    + "so Jellyfin treats remote viewers as home. Add 127.0.0.1 under Dashboard > Networking > Known proxies.");
+            }
+        }
+        catch (Exception ex)
+        {
+            o["networkError"] = ex.GetType().Name;
         }
 
-        if (v.TryGetValue<long>(out var l))
-        {
-            return l;
-        }
-
-        return v.TryGetValue<int>(out var i) ? i : null;
+        o["warnings"] = warnings;
+        return o;
     }
 }

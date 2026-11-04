@@ -18,6 +18,11 @@ namespace Jellyfin.Plugin.BetterPlay.Probe;
 public sealed class DeliveryMeterStartupFilter : IStartupFilter
 {
     private static readonly Regex SegmentRe = new(@"/hls1?/[^/]+/(-?\d+)\.(ts|mp4|m4s)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex ExtInfRe = new(@"#EXTINF:([\d.]+)", RegexOptions.Compiled);
+    private static readonly Regex TargetDurationRe = new(@"#EXT-X-TARGETDURATION:(\d+)", RegexOptions.Compiled);
+
+    // Enough of a playlist to read its segment length; the rest passes through uncopied.
+    private const int PlaylistHeadBytes = 8192;
 
     private readonly ProbeLog _log;
 
@@ -39,9 +44,17 @@ public sealed class DeliveryMeterStartupFilter : IStartupFilter
     {
         _log.Seen("middleware");
         string? kind = null;
+        var isPlaylist = false;
         try
         {
             var path = context.Request.Path.Value ?? string.Empty;
+            // A local reverse proxy (nginx on the same machine) without KnownProxies: Jellyfin sees everyone as home.
+            if (context.Connection.RemoteIpAddress is { } ip && System.Net.IPAddress.IsLoopback(ip) && context.Request.Headers.ContainsKey("X-Forwarded-For"))
+            {
+                _log.Seen("forwarded-from-loopback");
+            }
+
+            isPlaylist = path.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase);
             var cfg = ProbeLog.Config;
             if (ProbeLog.Enabled && cfg is not null && !context.WebSockets.IsWebSocketRequest)
             {
@@ -63,7 +76,7 @@ public sealed class DeliveryMeterStartupFilter : IStartupFilter
         }
 
         var sw = Stopwatch.StartNew();
-        var counter = new CountingBodyFeature(original, sw);
+        var counter = new CountingBodyFeature(original, sw, isPlaylist ? PlaylistHeadBytes : 0);
         context.Features.Set<IHttpResponseBodyFeature>(counter);
         try
         {
@@ -85,7 +98,7 @@ public sealed class DeliveryMeterStartupFilter : IStartupFilter
             var q = context.Request.Query;
             var segment = SegmentRe.Match(path);
             _log.Seen(kind + "-meter");
-            _log.Write(kind, new JsonObject
+            var o = new JsonObject
             {
                 ["path"] = path,
                 ["playSessionId"] = q["PlaySessionId"].ToString(),
@@ -104,7 +117,19 @@ public sealed class DeliveryMeterStartupFilter : IStartupFilter
                 ["userAgent"] = context.Request.Headers.UserAgent.ToString(),
                 ["remote"] = context.Connection.RemoteIpAddress?.ToString(),
                 ["forwardedFor"] = context.Request.Headers["X-Forwarded-For"].ToString(),
-            });
+            };
+
+            // Segment length, so request timing can be read against it (a player on a too-slow link asks for the next
+            // segment later than one segment length after the last).
+            if (counter.Head is { } head && head.StartsWith("#EXTM3U", StringComparison.Ordinal))
+            {
+                var inf = ExtInfRe.Match(head);
+                var target = TargetDurationRe.Match(head);
+                o["segmentSeconds"] = inf.Success && double.TryParse(inf.Groups[1].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var s) ? s : null;
+                o["targetDuration"] = target.Success && int.TryParse(target.Groups[1].Value, out var td) ? td : null;
+            }
+
+            _log.Write(kind, o);
         }
         catch
         {
@@ -130,13 +155,16 @@ public sealed class DeliveryMeterStartupFilter : IStartupFilter
     {
         private readonly IHttpResponseBodyFeature _inner;
         private readonly Stopwatch _sw;
+        private readonly byte[]? _head;
+        private int _headLength;
         private long _bytes;
         private long _firstByteTicks = -1;
 
-        public CountingBodyFeature(IHttpResponseBodyFeature inner, Stopwatch sw)
+        public CountingBodyFeature(IHttpResponseBodyFeature inner, Stopwatch sw, int headBytes)
         {
             _inner = inner;
             _sw = sw;
+            _head = headBytes > 0 ? new byte[headBytes] : null;
             Stream = new CountingStream(inner.Stream, this);
             Writer = new CountingPipeWriter(inner.Writer, this);
         }
@@ -148,6 +176,21 @@ public sealed class DeliveryMeterStartupFilter : IStartupFilter
         public long Bytes => Interlocked.Read(ref _bytes);
 
         public double? FirstByteMs => _firstByteTicks < 0 ? null : Math.Round(TimeSpan.FromTicks(_firstByteTicks).TotalMilliseconds, 1);
+
+        /// <summary>The start of the response as text, when asked for (playlists only).</summary>
+        public string? Head => _head is null || _headLength == 0 ? null : System.Text.Encoding.UTF8.GetString(_head, 0, _headLength);
+
+        public void Add(ReadOnlySpan<byte> data)
+        {
+            if (_head is not null && _headLength < _head.Length)
+            {
+                var n = Math.Min(data.Length, _head.Length - _headLength);
+                data[..n].CopyTo(_head.AsSpan(_headLength));
+                _headLength += n;
+            }
+
+            Add(data.Length);
+        }
 
         public void Add(long n)
         {
@@ -215,25 +258,25 @@ public sealed class DeliveryMeterStartupFilter : IStartupFilter
         public override void Write(byte[] buffer, int offset, int count)
         {
             _inner.Write(buffer, offset, count);
-            _owner.Add(count);
+            _owner.Add(buffer.AsSpan(offset, count));
         }
 
         public override void Write(ReadOnlySpan<byte> buffer)
         {
             _inner.Write(buffer);
-            _owner.Add(buffer.Length);
+            _owner.Add(buffer);
         }
 
         public override async Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         {
             await _inner.WriteAsync(buffer.AsMemory(offset, count), cancellationToken).ConfigureAwait(false);
-            _owner.Add(count);
+            _owner.Add(buffer.AsSpan(offset, count));
         }
 
         public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
         {
             await _inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
-            _owner.Add(buffer.Length);
+            _owner.Add(buffer.Span);
         }
     }
 
@@ -272,7 +315,7 @@ public sealed class DeliveryMeterStartupFilter : IStartupFilter
 
         public override ValueTask<FlushResult> WriteAsync(ReadOnlyMemory<byte> source, CancellationToken cancellationToken = default)
         {
-            _owner.Add(source.Length);
+            _owner.Add(source.Span);
             return _inner.WriteAsync(source, cancellationToken);
         }
     }

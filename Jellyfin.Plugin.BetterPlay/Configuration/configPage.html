@@ -21,6 +21,10 @@
                 #BetterPlayConfigPage pre { white-space: pre-wrap; word-break: break-word; max-height: 24em; overflow: auto; font-size: .82em; background: rgba(0,0,0,.25); padding: .6em; border-radius: 4px; margin: .3em 0 0; }
                 #BetterPlayConfigPage .bp-event { cursor: pointer; }
                 #BetterPlayConfigPage .bp-scroll { overflow-x: auto; }
+                #BetterPlayConfigPage .bp-warn { background: rgba(255,152,0,.15); border-left: 3px solid #ff9800; padding: .5em .8em; margin: .6em 0; border-radius: 4px; }
+                #BetterPlayConfigPage .bp-Healthy { color: #4caf50; font-weight: 600; }
+                #BetterPlayConfigPage .bp-AtRisk { color: #ff9800; font-weight: 600; }
+                #BetterPlayConfigPage .bp-Stalled { color: #f44336; font-weight: 600; }
             </style>
 
             <h2>BetterPlay</h2>
@@ -31,6 +35,8 @@
             <div class="bp-card">
                 <h3>Status</h3>
                 <div id="bpStatusLine" class="bp-muted">Loading…</div>
+                <div id="bpWarnings"></div>
+                <div id="bpServer" class="bp-muted"></div>
                 <div class="bp-scroll">
                     <table>
                         <thead><tr><th>Hook</th><th>What it shows</th><th>Working?</th><th>Times seen</th><th>Last seen</th></tr></thead>
@@ -94,11 +100,14 @@
                 <h3>Recent playback (last 3 hours)</h3>
                 <div class="bp-scroll">
                     <table>
-                        <thead><tr><th>Started</th><th>App / device / method</th><th>Startup speed</th><th>Segments</th><th>Avg segment time</th><th>Data</th></tr></thead>
+                        <thead><tr><th>Started</th><th>App / device / method</th><th>Title</th><th>State</th><th>Buffer ahead</th><th>Late requests</th><th>Typical gap</th><th>Seeks / repeats</th><th>Data</th></tr></thead>
                         <tbody id="bpSessions"></tbody>
                     </table>
                 </div>
-                <p class="bp-muted">Startup speed is how fast the first 10 seconds of video arrived. A transcoded segment holds about 3 s of video (6 s when copied), so an average delivery time near or above that means the connection can't keep up.</p>
+                <p class="bp-muted">BetterPlay reads health from when the player asks for each piece of video. A player on a link that keeps up asks
+                    about once per segment length (shown under the gap, e.g. "6.0 s / 6 s"); slower than that means its buffer is draining.
+                    <b>At risk</b>: requests are late or the buffer is under two segments. <b>Stalled</b>: the player's position stopped
+                    moving while not paused. <span id="bpProxyNote"></span></p>
             </div>
 
             <!-- Events -->
@@ -183,6 +192,13 @@
                 return ApiClient.getJSON(url('Status')).then(function (s) {
                     $('#bpStatusLine').textContent = 'Version ' + s.version + ' · mode: ' + (s.mode === 'WatchOnly' ? 'Watch only' : s.mode)
                         + (s.droppedEvents ? ' · ' + s.droppedEvents + ' events could not be written' : '');
+                    var srv = s.server || {};
+                    var warn = $('#bpWarnings'); warn.innerHTML = '';
+                    (srv.warnings || []).forEach(function (w) { warn.appendChild(el('div', w, 'bp-warn')); });
+                    $('#bpServer').textContent = 'Server: hardware encoding ' + (srv.hardwareAcceleration || '?')
+                        + ' · throttle transcodes ' + (srv.throttleTranscodes ? 'on' : 'off')
+                        + ' · delete old segments ' + (srv.deleteSegments ? 'on' : 'off')
+                        + ' · known proxies: ' + ((srv.knownProxies || []).join(', ') || 'none');
                     var body = $('#bpHooks'); body.innerHTML = '';
                     hookInfo.forEach(function (h) {
                         var st = (s.hooks || {})[h[0]];
@@ -204,12 +220,21 @@
             function loadSessions() {
                 return ApiClient.getJSON(url('Sessions', { minutes: 180 })).then(function (list) {
                     var body = $('#bpSessions'); body.innerHTML = '';
-                    if (!list.length) { body.appendChild(row(['No playback recorded yet.', '', '', '', '', ''])); return; }
+                    var states = { Healthy: 'Healthy', AtRisk: 'At risk', Stalled: 'Stalled', Paused: 'Paused', Ended: 'Ended', Idle: 'Idle' };
+                    var hidden = false;
+                    if (!list.length) { body.appendChild(row(['No playback recorded yet.', '', '', '', '', '', '', '', ''])); }
                     list.sort(function (a, b) { return a.first < b.first ? 1 : -1; }).forEach(function (x) {
-                        body.appendChild(row([when(x.first), x.client || '(unknown app)',
-                            x.startupBurstMbps === null ? '—' : x.startupBurstMbps + ' Mbps', x.segments,
-                            x.avgSegmentMs === null ? '—' : (x.avgSegmentMs / 1000).toFixed(2) + ' s', x.mb + ' MB']));
+                        hidden = hidden || x.timingsHiddenByProxy;
+                        body.appendChild(row([when(x.first), x.client || '(unknown app)', x.item || '',
+                            el('span', states[x.state] || x.state, 'bp-' + x.state),
+                            x.bufferAheadSec === null ? '—' : x.bufferAheadSec + ' s',
+                            x.lateRequests + (x.lateRequestsLastMinute ? ' (' + x.lateRequestsLastMinute + ' in the last minute)' : ''),
+                            (x.medianGapSec === null ? '—' : x.medianGapSec.toFixed(1) + ' s') + ' / ' + x.segmentSeconds + ' s',
+                            x.seeks + ' / ' + x.reRequests, x.mb + ' MB']));
                     });
+                    $('#bpProxyNote').textContent = hidden
+                        ? 'A proxy on the server (e.g. nginx with buffering) receives video faster than viewers do, so the server-side transfer speed is not the viewer\'s speed; BetterPlay relies on request timing instead.'
+                        : '';
                 });
             }
 
