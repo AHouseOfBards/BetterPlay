@@ -133,6 +133,76 @@ With the GPU and `PreferTranscodeQualityGain` on, 7.5 ≥ 2 × 3, so the 4K file
 If the server is the bottleneck (transcode below 1×), the fix differs: drop the tone mapping or resolution, or switch
 to remuxing a lower version instead of transcoding.
 
+## 5a. Ladder control: no rapid notching up and down
+
+Quality changes are rare and deliberate: **step down fast when it matters, step up slowly once it's proven.**
+
+1. **Ladder rungs about 1.5× apart:** copy (original), then 40, 25, 16, 10, 6.5, 4, 2.5 Mbps. Each rung is a visible
+   difference, so there's never a reason to hop between near-identical rungs. Each step down costs one encoder
+   restart.
+2. **Asymmetric rules:**
+   - **Down:** when the buffer is under 15 s and falling, or 2 or more late requests in the last minute. Go straight
+     to the rung under 0.8 × measured throughput, skipping rungs if needed, so one step down is enough.
+   - **Up:** one rung at a time, only after at least 3 min at the current rung with the buffer full (25 s or more)
+     and measured throughput at least 1.5 × the next rung's bitrate. The **copy rung needs the highest bar**:
+     throughput at least 1.3 × the original's peak segment rate (not its average), held for 5 min.
+3. **Minimum time on a rung:** 60 s after any change before another step down, unless Stalled, and 3 min before any
+   step up. At most 4 changes in 10 min. After that, hold the lower rung for 10 min.
+4. **Back-off on failed step-ups:** if a step up is followed by a step down within 2 min, that rung is "failed". The
+   wait before trying it again doubles each time (3, 6, 12, then 20 min at most). It's remembered per device and
+   network, so the next film starts on the right rung.
+5. **Throughput estimate, conservative:** two moving averages, fast (half-life about 2 segments) and slow (half-life
+   about 10 segments).
+   - Step down on the lower of the two.
+   - Step up only on the slow one, and only when the fast one agrees.
+   - A brief dip with a full buffer is ignored, because the buffer covers it.
+6. **Headroom can only be measured while the player fetches flat out:**
+   - **What request timing can't show:** with a full buffer, the player asks once per segment length. That proves
+     "at least the current bitrate" but not how much more the link could carry.
+   - **Where headroom shows:** during the startup burst, the refill after a seek, and the refill after a dip. Use
+     segment bytes over the gap between requests.
+   - **What a step up waits for:** a recent burst measurement. With none in the last 10 min, BetterPlay stays put
+     instead of guessing.
+7. **Bitrate per segment, not on paper:** VBR originals have peaks, so judge each rung by its real bytes per second
+   of video over the last segments, not by its nominal bitrate.
+8. **Server-side bottleneck:** if the encoder runs below 1.05 × real time, more bandwidth won't help. Step resolution
+   or tone mapping down instead, and don't count it as a network failure.
+
+## 5b. Silent stops and failed starts (not network)
+
+**What the user sees:** sometimes a file won't start, or stops mid-play with no loading spinner. That usually means the
+player isn't waiting for data; something it asked for failed or never arrived. Typical causes:
+- the server couldn't read the file (slow or failing disk, network share hiccup);
+- ffmpeg died or stopped producing;
+- a segment request returned an error;
+- the file's media info is missing (failed probe), so the server offers nothing playable.
+
+**Evidence on the user's setup (2026-11-04):**
+- Media host drive E: (USB external, "Disk 1", 98% full) logged 92 read retries in 3 days. It holds every "… 1"
+  library folder.
+- The Jellyfin server logged SMB errors ("insufficient system resources") on its folder watchers, and failed probes
+  ("streams and format are both null") on normal files during scans.
+
+**What BetterPlay adds (incident capture):**
+- **Incident triggers:**
+  - Stalled for more than 5 s;
+  - a stop without completion within 30 s of a stall;
+  - the same item requested again within 2 min;
+  - any delivery with status 400 or higher;
+  - a segment whose first byte takes more than 2 × the segment length.
+- **What each incident records:**
+  - the session's last 30 requests (status, time to first byte, bytes);
+  - the progress around the incident;
+  - the source file's path and drive;
+  - the active ffmpeg log name;
+  - server log errors within ±30 s.
+- **Time to first byte stays meaningful behind nginx.** It measures how long Jellyfin took to produce the response:
+  disk reads and ffmpeg. So slow or failing storage shows up even though throughput is hidden.
+- **Dashboard "Incidents" list:** per incident, the likely cause (storage, transcoder, request error, network,
+  missing media info), plus counts per drive and library so a failing disk stands out.
+- **Rescue for read stalls (later, Mode = On):** when a segment's first byte is late because the source is slow, and
+  another version of the title exists on a different drive, the next restart uses that version.
+
 ## 6. Actions, by client capability
 
 | Action | Clients | Smoothness |
